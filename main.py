@@ -6,6 +6,7 @@ from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiohttp import web  # Web service uchun kerakli modul
 
 # Tokenni Render Environment Variables bo'limidan olamiz
 TOKEN = os.getenv("BOT_TOKEN")
@@ -93,4 +94,63 @@ async def process_kiymati(message: Message, state: FSMContext):
     conn.commit()
     conn.close()
 
-    await state.clear
+    await state.clear()
+    await message.answer("✅ **Ma'lumotingiz bazaga xavfsiz saqlandi!**", reply_markup=main_keyboard)
+
+# --- 6. SAQLANGAN MA'LUMOTLARNI KO'RISH ---
+@dp.message(F.text == "📂 Saqlangan ma'lumotlarim")
+async def show_data(message: Message):
+    conn = sqlite3.connect("bot_bazasi.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT tur, nomi, kiymati FROM malumotlar WHERE user_id = ?", (message.from_user.id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        await message.answer("📭 Bazangizda hali hech qanday ma'lumot yo'q.")
+        return
+
+    text = "📂 **Sizning saqlangan ma'lumotlaringiz:**\n\n"
+    for row in rows:
+        text += f"🔹 **{row[0]}** ({row[1]}):\n`{row[2]}`\n\n"
+
+    await message.answer(text, parse_mode="Markdown")
+
+# --- 7. MA'LUMOTLARNI O'CHIRISH ---
+@dp.message(F.text == "🗑 Mening bazamni tozalash")
+async def clear_data(message: Message):
+    conn = sqlite3.connect("bot_bazasi.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM malumotlar WHERE user_id = ?", (message.from_user.id,))
+    conn.commit()
+    conn.close()
+    
+    await message.answer("🗑 Sizga tegishli barcha saqlangan ma'lumotlar bazadan o'chirildi.")
+
+# --- 8. RENDER UCHUN SOXTA WEB SERVER ---
+async def handle_ping(request):
+    return web.Response(text="Bot runs smoothly!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Render bergan PORT o'zgaruvchisini olamiz (standart 10000 bo'ladi)
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"Web server started on port {port}")
+
+# --- 9. BOT VA SERVERNI ISHGA TUSHIRISH ---
+async def main():
+    # Render sezishi uchun web serverni ishga tushiramiz
+    await start_web_server()
+    print("Bot muvaffaqiyatli ishga tushdi!")
+    
+    # Telegram bot polling rejimida ishlaydi
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
